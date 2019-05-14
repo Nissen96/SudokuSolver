@@ -3,7 +3,7 @@ import argparse
 from itertools import product
 
 
-BOARDS = ["medium", "hard"]  # Available Sudoku boards
+BOARDS = ["easy", "medium", "hard"]  # Available Sudoku boards
 
 
 class SudokuError(Exception):
@@ -229,8 +229,6 @@ class SudokuCLI:
             return self.__get_input(msg)
 
         if user_input == -1:
-            self.__clear_answers()
-        elif user_input == -2:
             print("Thanks for playing!")
             exit()
         return user_input
@@ -238,10 +236,8 @@ class SudokuCLI:
 
 def input_int(msg, min=None, max=None):
     user_input = input(msg).lower()
-    if user_input in ("c", "clear"):
-        return -1
     if user_input in ("q", "quit"):
-        return -2
+        return -1
     try:
         user_input = int(user_input)
     except ValueError:
@@ -287,7 +283,7 @@ def main():
     board_name = args.board
     strict = args.strict
 
-    with open(f"{board_name}.sudoku", "r") as board_file:
+    with open(f"sudokus/{board_name}.sudoku", "r") as board_file:
         try:
             game = SudokuGame(board_file, strict=strict)
         except SudokuError as e:
