@@ -29,7 +29,7 @@ class SudokuBase:
 
     @staticmethod
     def get_column(board, column):
-        return (board[row][column] for row in range(9))
+        return [board[row][column] for row in range(9)]
 
     @staticmethod
     def get_columns(board):
@@ -37,11 +37,11 @@ class SudokuBase:
 
     @staticmethod
     def get_square(board, row, column):
-        return (
+        return [
             board[r][c]
             for r in range(row * 3, (row + 1) * 3)
             for c in range(column * 3, (column + 1) * 3)
-        )
+        ]
 
     @staticmethod
     def get_squares(board):
@@ -234,14 +234,40 @@ class SudokuSolver(SudokuBase):
             self.__hidden_quad,
         ]
 
+        rows = self.get_rows(self.remainders)
+        columns = self.get_columns(self.remainders)
+        squares = self.get_squares(self.remainders)
+
         # Run technique and return if anything was changed
         for strategy in strategies:
             print(strategy.__name__)
-            if strategy():
-                return True
+            for r, row in enumerate(rows):
+                updates = strategy(row)
+                if len(updates) != 0:
+                    self.__update_remainders(updates, row=r)
+                    return True
+
+            for c, column in enumerate(columns):
+                updates = strategy(column)
+                if len(updates) != 0:
+                    self.__update_remainders(updates, column=c)
+                    return True
+
+            for s, square in enumerate(squares):
+                updates = strategy(square)
+                if len(updates) != 0:
+                    self.__update_remainders(updates, row=(s // 3) * 3, column=(s % 3) * 3)
+                    return True
 
         # No changes with any technique - failed to solve
         return False
+
+    def __init_constraints(self):
+        for r, row in enumerate(self.board):
+            self.remainders.append([])
+            for c, cell in enumerate(row):
+                remainders = self.__get_cell_remainders(r, c)
+                self.remainders[r].append(remainders)
 
     def __get_cell_remainders(self, row, column):
         if self.board[row][column] != 0:
@@ -254,12 +280,36 @@ class SudokuSolver(SudokuBase):
                        )
         return remainders
 
-    def __init_constraints(self):
-        for r, row in enumerate(self.board):
-            self.remainders.append([])
-            for c, cell in enumerate(row):
-                remainders = self.__get_cell_remainders(r, c)
-                self.remainders[r].append(remainders)
+    def __update_remainders(self, updates, row=None, column=None):
+        if row is None and column is None:
+            raise AttributeError("Either row or column must be set")
+
+        for idx, numbers in updates.items():
+            if row is None:
+                self.remainders[idx][column] = numbers
+            elif column is None:
+                self.remainders[row][idx] = numbers
+            else:
+                self.remainders[row + idx // 3][column + idx % 3] = numbers
+
+    def __naked_single(self):
+        """
+        Checks all cells for a naked single and sets each in the game.
+        Naked singles are when only a single number can be in the cell
+        Thus, the number is forced into this position.
+        :return: whether a cell was found
+        """
+        updated = False
+        for row, column in product(range(9), repeat=2):
+            cell = self.remainders[row][column]
+            if len(cell) == 1:
+                single = cell.pop()
+                self.game.set_cell(row, column, single)
+                print("Single:", row, column, single)
+                print(self.game)
+                self.__update_surrounding(row, column, single)
+                updated = True
+        return updated
 
     def __update_surrounding(self, row, column, number):
         # Iterate over the row, column and square
@@ -269,6 +319,29 @@ class SudokuSolver(SudokuBase):
             self.remainders[row][i].discard(number)
             self.remainders[i][column].discard(number)
             self.remainders[start_row + i // 3][start_column + i % 3].discard(number)
+
+    @staticmethod
+    def __naked_pair(block):
+        return SudokuSolver.__naked(block, 2)
+
+    @staticmethod
+    def __naked_triple(block):
+        return SudokuSolver.__naked(block, 3)
+
+    @staticmethod
+    def __naked_quad(block):
+        return SudokuSolver.__naked(block, 4)
+
+    @staticmethod
+    def __naked(block, count):
+        naked = dict()
+        for cell in block:
+            cells, numbers = SudokuSolver.__find_n_identical_in_n_cells(cell, count)
+            if len(cells) == 0:
+                for n in set(range(9)) - cells:
+                    if len(block[n] & numbers) != 0:
+                        naked[n] = block[n] - numbers
+        return naked
 
     @staticmethod
     def __find_n_identical_in_n_cells(block, n):
@@ -294,66 +367,39 @@ class SudokuSolver(SudokuBase):
 
         return match_cells, match_numbers
 
-    def __naked(self, count):
-        updated = False
+    @staticmethod
+    def __hidden_single(block):
+        return SudokuSolver.__hidden(block, 1)
 
-        for r, row in enumerate(self.get_rows(self.remainders)):
-            cells, numbers = self.__find_n_identical_in_n_cells(row, count)
-            if len(cells) > 0:
-                for c in set(range(9)) - cells:
-                    if len(self.remainders[r][c] & numbers) != 0:
-                        updated = True
-                        self.remainders[r][c] -= numbers
+    @staticmethod
+    def __hidden_pair(block):
+        return SudokuSolver.__hidden(block, 2)
 
-        for c, column in enumerate(self.get_columns(self.remainders)):
-            cells, numbers = self.__find_n_identical_in_n_cells(list(column), count)
-            if len(cells) > 0:
-                for r in set(range(9)) - cells:
-                    if len(self.remainders[r][c] & numbers) != 0:
-                        updated = True
-                        self.remainders[r][c] -= numbers
+    @staticmethod
+    def __hidden_triple(block):
+        return SudokuSolver.__hidden(block, 3)
 
-        for s, square in enumerate(self.get_squares(self.remainders)):
-            cells, numbers = self.__find_n_identical_in_n_cells(list(square), count)
-            if len(cells) > 0:
-                r_offset = (s // 3) * 3
-                c_offset = (s % 3) * 3
-                for n in set(range(9)) - cells:
-                    r = r_offset + n // 3
-                    c = c_offset + n % 3
-                    if len(self.remainders[r][c] & numbers) != 0:
-                        updated = True
-                        self.remainders[r][c] -= numbers
+    @staticmethod
+    def __hidden_quad(block):
+        return SudokuSolver.__hidden(block, 4)
 
-        return updated
-
-    def __naked_single(self):
+    @staticmethod
+    def __hidden(block, count):
         """
-        Checks all cells for a naked single and sets each in the game.
-        Naked singles are when only a single number can be in the cell
-        Thus, the number is forced into this position.
-        :return: whether a cell was found
+        Checks each block (row, column, square) for a hidden
+        A hidden single is when only a single cell in the block can hold a specific number
+        but other numbers are also possibilities for the cell.
+        These can then be removed as possibilities.
         """
-        updated = False
-        for row, column in product(range(9), repeat=2):
-            cell = self.remainders[row][column]
-            if len(cell) == 1:
-                single = cell.pop()
-                self.game.set_cell(row, column, single)
-                print("Single:", row, column, single)
-                print(self.game)
-                self.__update_surrounding(row, column, single)
-                updated = True
-        return updated
+        num_occurrences = SudokuSolver.__find_number_occurrences(block)
+        matches = SudokuSolver.__get_numbers_occurring_n(num_occurrences, count)
+        hidden = SudokuSolver.__get_n_cells_with_hidden(matches, count)
 
-    def __naked_pair(self):
-        return self.__naked(2)
+        return SudokuSolver.__isolate_hidden(block, hidden)
 
-    def __naked_triple(self):
-        return self.__naked(3)
-
-    def __naked_quad(self):
-        return self.__naked(4)
+    @staticmethod
+    def __get_numbers_occurring_n(num_occurrences, n):
+        return dict(filter(lambda x: len(x[1]) == n, num_occurrences.items()))
 
     @staticmethod
     def __find_number_occurrences(block):
@@ -366,25 +412,16 @@ class SudokuSolver(SudokuBase):
 
         return block_counter
 
-    def __get_numbers_occurring_n(self, block, n):
-        matches = dict()
-
-        number_occurrences = self.__find_number_occurrences(block)
-        for num, occurrences in number_occurrences.items():
-            if len(occurrences) == n:
-                matches[num] = occurrences
-        return matches
-
     @staticmethod
     def __get_n_cells_with_hidden(cell_pool, n):
         if len(cell_pool) == 0:
             return
 
-        # Iterate over all possible pairings
         if n == 1:
             number, occurrences = cell_pool.popitem()
             return {number}, occurrences
 
+        # Iterate over all possible pairings
         for potential_match in combinations(cell_pool, n):
             match = True
             for num, next_num in pairwise(potential_match):
@@ -397,72 +434,13 @@ class SudokuSolver(SudokuBase):
                 occurrences = cell_pool[potential_match[0]]
                 return numbers, occurrences
 
-    def __isolate_hidden(self, hidden, row=None, column=None):
-        if row is None and column is None:
-            raise AttributeError("Either row or column must be specified")
+    @staticmethod
+    def __isolate_hidden(block, hidden):
+        if hidden is None:
+            return set()
 
-        numbers, occurrences = hidden
-        any_isolated = False
-        for cell in occurrences:
-            # Square input
-            if not (row is None or column is None):
-                r = row * 3 + cell // 3
-                c = column * 3 + cell % 3
-            # Row or column input
-            else:
-                r = cell if row is None else row
-                c = cell if column is None else column
-
-            if self.remainders[r][c] != numbers:
-                self.remainders[r][c] = numbers
-                any_isolated = True
-
-        return any_isolated
-
-    def __hidden_block(self, block, count, row=None, column=None):
-        matches = self.__get_numbers_occurring_n(block, count)
-        hidden = self.__get_n_cells_with_hidden(matches, count)
-
-        if hidden is not None:
-            return self.__isolate_hidden(hidden, row=row, column=column)
-
-        return False
-
-    def __hidden(self, count):
-        """
-        Checks each block (row, column, square) for a hidden
-        A hidden single is when only a single cell in the block can hold a specific number
-        but other numbers are also possibilities for the cell.
-        These can then be removed as possibilities.
-        """
-        # Check in rows
-        for r, row in enumerate(self.get_rows(self.remainders)):
-            if self.__hidden_block(row, count, row=r):
-                return True
-
-        # Check in columns
-        for c, column in enumerate(self.get_columns(self.remainders)):
-            if self.__hidden_block(column, count, column=c):
-                return True
-
-        # Check in square
-        for s, square in enumerate(self.get_squares(self.remainders)):
-            if self.__hidden_block(square, count, row=s // 3, column=s % 3):
-                return True
-
-        return False
-
-    def __hidden_single(self):
-        return self.__hidden(1)
-
-    def __hidden_pair(self):
-        return self.__hidden(2)
-
-    def __hidden_triple(self):
-        return self.__hidden(3)
-
-    def __hidden_quad(self):
-        return self.__hidden(4)
+        num, occ = hidden
+        return {cell: num for cell in occ if block[cell] != num}
 
 
 class SudokuCLI:
